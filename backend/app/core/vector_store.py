@@ -11,26 +11,33 @@ from pathlib import Path
 from typing import List
 
 import chromadb
-from chromadb.config import Settings                  # <- NEW
+from chromadb.config import Settings
 from chromadb.utils.embedding_functions import EmbeddingFunction
 
-from app.config import settings
 from app.core.embeddings import get_default_provider
 
 # --------------------------------------------------------------------------- #
-# Client setup (persistent dir under project root by default)
+# Client setup
 # --------------------------------------------------------------------------- #
 _PERSIST_DIR = os.getenv(
     "CHROMA_PERSIST_DIR",
     str(Path(__file__).resolve().parent.parent.parent / ".chroma"),
 )
 
-# Disable telemetry to avoid posthog capture errors
-_chroma_settings = Settings(anonymized_telemetry=False)      # <- NEW
-_client = chromadb.PersistentClient(path=_PERSIST_DIR, settings=_chroma_settings)  # <- MOD
+# honour env override or default to False
+_TELEMETRY = os.getenv("ANONYMIZED_TELEMETRY", "false").lower() == "true"
+
+_settings = Settings(
+    anonymized_telemetry=_TELEMETRY,
+    is_persistent=True,
+    persist_directory=_PERSIST_DIR,
+)
+
+# Using factory guarantees _settings is respected
+_client = chromadb.HttpClient(settings=_settings)
 
 # --------------------------------------------------------------------------- #
-# Embedding function adapter (Chroma expects __call__)
+# Embedding function adapter
 # --------------------------------------------------------------------------- #
 class _Adapter(EmbeddingFunction):
     def __init__(self):
@@ -41,8 +48,9 @@ class _Adapter(EmbeddingFunction):
 
 
 _emb_fn = _Adapter()
-
-_collection = _client.get_or_create_collection("products", embedding_function=_emb_fn)
+_collection = _client.get_or_create_collection(
+    name="products", embedding_function=_emb_fn
+)
 
 
 def get_collection():
