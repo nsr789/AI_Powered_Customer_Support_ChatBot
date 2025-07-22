@@ -17,14 +17,13 @@ from chromadb.utils.embedding_functions import EmbeddingFunction
 from app.core.embeddings import get_default_provider
 
 # --------------------------------------------------------------------------- #
-# Client setup
+# Client setup (embedded persistent DB – no separate server required)
 # --------------------------------------------------------------------------- #
 _PERSIST_DIR = os.getenv(
     "CHROMA_PERSIST_DIR",
     str(Path(__file__).resolve().parent.parent.parent / ".chroma"),
 )
 
-# honour env override or default to False
 _TELEMETRY = os.getenv("ANONYMIZED_TELEMETRY", "false").lower() == "true"
 
 _settings = Settings(
@@ -33,13 +32,15 @@ _settings = Settings(
     persist_directory=_PERSIST_DIR,
 )
 
-# Using factory guarantees _settings is respected
-_client = chromadb.HttpClient(settings=_settings)
+# Embedded client; runs in-process
+_client = chromadb.PersistentClient(path=_PERSIST_DIR, settings=_settings)
 
 # --------------------------------------------------------------------------- #
 # Embedding function adapter
 # --------------------------------------------------------------------------- #
 class _Adapter(EmbeddingFunction):
+    """Wrap our embedding provider so Chroma can call it."""
+
     def __init__(self):
         self._provider = get_default_provider()
 
@@ -49,7 +50,8 @@ class _Adapter(EmbeddingFunction):
 
 _emb_fn = _Adapter()
 _collection = _client.get_or_create_collection(
-    name="products", embedding_function=_emb_fn
+    name="products",
+    embedding_function=_emb_fn,
 )
 
 
