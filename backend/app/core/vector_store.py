@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List
 
 import chromadb
+from chromadb.config import Settings                  # <- NEW
 from chromadb.utils.embedding_functions import EmbeddingFunction
 
 from app.config import settings
@@ -24,8 +25,9 @@ _PERSIST_DIR = os.getenv(
     str(Path(__file__).resolve().parent.parent.parent / ".chroma"),
 )
 
-_client = chromadb.PersistentClient(path=_PERSIST_DIR)
-
+# Disable telemetry to avoid posthog capture errors
+_chroma_settings = Settings(anonymized_telemetry=False)      # <- NEW
+_client = chromadb.PersistentClient(path=_PERSIST_DIR, settings=_chroma_settings)  # <- MOD
 
 # --------------------------------------------------------------------------- #
 # Embedding function adapter (Chroma expects __call__)
