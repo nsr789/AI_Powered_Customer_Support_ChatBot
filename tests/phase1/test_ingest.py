@@ -1,6 +1,8 @@
 """
 Unit-test the FakeStore loader with mocked network.
 """
+from __future__ import annotations
+
 import json
 from unittest.mock import Mock, patch
 
@@ -8,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
+from app.models.product import Product  # <-- import the actual ORM class
 from app.services.data_loader import fetch_products, save_products
 
 _SAMPLE_JSON = [
@@ -31,7 +34,9 @@ _SAMPLE_JSON = [
 
 
 def _memory_session():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine)()
 
@@ -42,6 +47,7 @@ def test_fetch_and_save(mock_get: Mock) -> None:
     mock_get.return_value.json.return_value = _SAMPLE_JSON
 
     session = _memory_session()
+
     # Fetch mocked data
     data = fetch_products()
     assert data == _SAMPLE_JSON
@@ -51,5 +57,5 @@ def test_fetch_and_save(mock_get: Mock) -> None:
     assert inserted == len(_SAMPLE_JSON)
 
     # Verify DB content
-    titles = [p.title for p in session.query(Base.classes.products)]  # type: ignore[attr-defined]
+    titles = [p.title for p in session.query(Product).all()]
     assert titles == ["Test Tee", "Coffee Mug"]
