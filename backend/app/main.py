@@ -31,6 +31,7 @@ def create_app() -> Flask:
 
     # ---- Blueprints ---------------------------------------------------------
     app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(chat_bp, url_prefix="/api")
 
     # ---- DB initialisation --------------------------------------------------
     with app.app_context():
