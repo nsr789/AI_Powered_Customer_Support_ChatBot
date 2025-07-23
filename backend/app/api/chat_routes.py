@@ -3,10 +3,8 @@ Streaming chat endpoint using Server-Sent Events (SSE).
 """
 from __future__ import annotations
 
-from typing import List
-
-from flask import Blueprint, Response, json, request
-from sse_starlette.sse import EventSourceResponse
+import json
+from flask import Blueprint, Response, request
 
 from app.services.agent_router import router
 
