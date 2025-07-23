@@ -4,16 +4,17 @@ LLM provider utilities: wraps OpenAIChat + cheap FakeLLM for tests.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Dict, List
 
-from langchain.chat_models import ChatOpenAI
+# UPDATED import path -----------------------------------------------
+from langchain_openai import ChatOpenAI
 from langchain.schema import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
-
+# -------------------------------------------------------------------
 class LLMInterface:
     """Protocol-like minimal interface."""
 
-    def stream(self, messages: List[Dict[str, str]]):  # pragma: no cover
+    def stream(self, messages: List[Dict[str, str]]):
         raise NotImplementedError
 
 
@@ -25,22 +26,16 @@ class OpenAIProvider(LLMInterface):
         )
 
     def stream(self, messages: List[Dict[str, str]]):
-        # Convert dict → LangChain message objects
-        lc_msgs: List[BaseMessage] = []
         role_map = {"system": SystemMessage, "user": HumanMessage, "assistant": AIMessage}
-        for msg in messages:
-            lc_msgs.append(role_map[msg["role"]](content=msg["content"]))
+        lc_msgs: List[BaseMessage] = [role_map[m["role"]](content=m["content"]) for m in messages]
 
         for chunk in self._chat.stream(lc_msgs):
-            yield chunk.content  # str pieces
+            yield chunk.content
 
 
 class FakeLLM(LLMInterface):
-    """Deterministic single-shot LLM for tests."""
+    """Deterministic LLM for unit tests."""
 
     def stream(self, messages: List[Dict[str, str]]):
         prompt = messages[-1]["content"].lower()
-        if "recommend" in prompt:
-            yield "Here are some picks just for you!"
-        else:
-            yield "Sorry, I couldn't find anything."
+        yield "Here are some picks" if "recommend" in prompt else "Sorry, nothing found."
