@@ -1,26 +1,25 @@
 """
 Product ORM entity mapped to the `products` table.
-
-Represents the catalogue items we ingest from FakeStore.
 """
 from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import Column, Integer, Numeric, String, Text
+from sqlalchemy import Integer, Numeric, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 
 
-class Product(Base):  # type: ignore
+class Product(Base):  # type: ignore[call-arg]
     __tablename__ = "products"
 
-    id: int | Column[int] = Column(Integer, primary_key=True, index=True)
-    title: str | Column[str] = Column(String(255), nullable=False)
-    description: str | Column[str | None] = Column(Text, nullable=True)
-    category: str | Column[str | None] = Column(String(100), nullable=True)
-    price: Decimal | Column[Decimal] = Column(Numeric(10, 2), nullable=False)
-    image: str | Column[str | None] = Column(String(255), nullable=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    image: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # ------------------------------------------------------------------#
     # Utility helpers
