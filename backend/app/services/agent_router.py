@@ -79,11 +79,11 @@ graph.add_node("fallback", run_recommender)
 
 graph.set_entry_point("ask_llm")
 
-# Correct conditional routing
+# ---- FIX: pass condition as positional arg ---------------------------------
 graph.add_conditional_edges(
-    source="ask_llm",
-    condition=decide_retrieval,
-    path_map={
+    "ask_llm",                     # source node
+    decide_retrieval,              # <- positional condition callable
+    {
         "search": "search",
         "fallback": "fallback",
     },
