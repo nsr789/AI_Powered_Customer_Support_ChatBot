@@ -6,8 +6,8 @@ from __future__ import annotations
 import os
 from typing import Dict, List
 
+from langgraph.graph import END, StateGraph
 from langchain_core.messages import HumanMessage
-from langgraph.graph import END, MessageGraph
 
 from app.core.llm import LLMInterface, OpenAIProvider, FakeLLM
 from app.core.database import get_db
@@ -69,9 +69,8 @@ def run_recommender(state: Dict) -> Dict:
 
 
 # --------------------------------------------------------------------------- #
-# Build LangGraph
-# --------------------------------------------------------------------------- #
-graph = MessageGraph()
+# Build LangGraph -------------------------------------------------------------
+graph = StateGraph()
 
 graph.add_node("ask_llm", ask_llm)
 graph.add_node("search", run_search)
@@ -79,10 +78,9 @@ graph.add_node("fallback", run_recommender)
 
 graph.set_entry_point("ask_llm")
 
-# ---- FIX: pass condition as positional arg ---------------------------------
 graph.add_conditional_edges(
-    "ask_llm",                     # source node
-    decide_retrieval,              # <- positional condition callable
+    "ask_llm",
+    decide_retrieval,
     {
         "search": "search",
         "fallback": "fallback",
