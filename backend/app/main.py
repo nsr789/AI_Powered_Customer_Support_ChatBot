@@ -8,6 +8,7 @@ from __future__ import annotations
 from flask import Flask, jsonify
 
 from app.api.routes import api_bp
+from app.api.chat_routes import chat_bp
 from app.core.database import init_db
 
 
