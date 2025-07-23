@@ -1,10 +1,8 @@
 """
 LangGraph state-machine deciding which tool to call.
-
-Nodes:
-    ask_llm → decide_retrieval → {search_products | recommender}
 """
 from __future__ import annotations
+
 import os
 from typing import Dict, List
 
@@ -16,14 +14,17 @@ from app.core.database import get_db
 from app.services.indexer import search_products
 from app.services.recommender import top_n
 
+# --------------------------------------------------------------------------- #
 # Select LLM provider
-_llm: LLMInterface = OpenAIProvider() if (os.getenv("OPENAI_API_KEY")) else FakeLLM()
+# --------------------------------------------------------------------------- #
+_llm: LLMInterface = OpenAIProvider() if os.getenv("OPENAI_API_KEY") else FakeLLM()
 
-
+# --------------------------------------------------------------------------- #
+# Node functions
+# --------------------------------------------------------------------------- #
 def ask_llm(state: Dict) -> Dict:
-    """LLM analyses user request and outputs tool name."""
+    """LLM analyses user request and writes `tool` into state."""
     user_query = state["query"]
-    # Tiny prompt; for prod you’d use a template + system role
     system_prompt = (
         "If the query is about finding or recommending a product respond "
         "with exactly 'search'. Otherwise respond with 'fallback'."
@@ -33,43 +34,62 @@ def ask_llm(state: Dict) -> Dict:
         {"role": "user", "content": user_query},
     ]
     tool = "".join(_llm.stream(messages)).strip().lower()
-    state["tool"] = tool
+    state["tool"] = "search" if tool == "search" else "fallback"
     return state
 
 
-def decide_retrieval(state: Dict):
-    return state["tool"]  # route key
+def decide_retrieval(state: Dict) -> str:
+    """Return next node key based on `tool`."""
+    return state["tool"]
 
 
-def run_search(state: Dict):
+def run_search(state: Dict) -> Dict:
     query = state["query"]
     db = next(get_db())
     results = search_products(db, query)
-    state["results"] = [p.as_dict() for p in results]
-    state["answer"] = "Here are some products I found"
+    state.update(
+        {
+            "results": [p.as_dict() for p in results],
+            "answer": "Here are some products I found.",
+        }
+    )
     return state
 
 
-def run_recommender(state: Dict):
+def run_recommender(state: Dict) -> Dict:
     db = next(get_db())
     results = top_n(db)
-    state["results"] = [p.as_dict() for p in results]
-    state["answer"] = "Here are popular picks"
+    state.update(
+        {
+            "results": [p.as_dict() for p in results],
+            "answer": "Here are popular picks for you.",
+        }
+    )
     return state
 
 
-# -------- Build LangGraph ----------------------------------------------------
+# --------------------------------------------------------------------------- #
+# Build LangGraph
+# --------------------------------------------------------------------------- #
 graph = MessageGraph()
 
 graph.add_node("ask_llm", ask_llm)
 graph.add_node("search", run_search)
 graph.add_node("fallback", run_recommender)
-graph.add_edge("ask_llm", decide_retrieval)
 
 graph.set_entry_point("ask_llm")
+
+# Correct conditional routing
+graph.add_conditional_edges(
+    source="ask_llm",
+    condition=decide_retrieval,
+    path_map={
+        "search": "search",
+        "fallback": "fallback",
+    },
+)
+
 graph.add_edge("search", END)
 graph.add_edge("fallback", END)
 
 router = graph.compile()
-
-_llm: LLMInterface = OpenAIProvider() if os.getenv("OPENAI_API_KEY") else FakeLLM()
