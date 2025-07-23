@@ -1,8 +1,5 @@
 """
 Centralised Chroma client / collection helpers.
-
-Collection name: `products`
-Vector dim depends on embedding provider (dynamic).
 """
 from __future__ import annotations
 
@@ -17,41 +14,49 @@ from chromadb.utils.embedding_functions import EmbeddingFunction
 from app.core.embeddings import get_default_provider
 
 # --------------------------------------------------------------------------- #
-# Client setup (embedded persistent DB – no separate server required)
+# Defensive patch: if an old stub of `posthog` is imported, make capture a no-op
+# --------------------------------------------------------------------------- #
+def _silence_broken_posthog() -> None:
+    try:
+        import posthog  # type: ignore
+        if not hasattr(posthog.capture, "__code__") or posthog.capture.__code__.co_argcount == 1:
+            posthog.capture = lambda *_, **__: None  # type: ignore[assignment]
+    except ImportError:
+        pass
+
+
+_silence_broken_posthog()
+
+# --------------------------------------------------------------------------- #
+# Client setup (embedded persistent DB – no external server)
 # --------------------------------------------------------------------------- #
 _PERSIST_DIR = os.getenv(
     "CHROMA_PERSIST_DIR",
     str(Path(__file__).resolve().parent.parent.parent / ".chroma"),
 )
 
-_TELEMETRY = os.getenv("ANONYMIZED_TELEMETRY", "false").lower() == "true"
-
-_settings = Settings(
-    anonymized_telemetry=_TELEMETRY,
+_SETTINGS = Settings(
+    anonymized_telemetry=False,
     is_persistent=True,
     persist_directory=_PERSIST_DIR,
 )
 
-# Embedded client; runs in-process
-_client = chromadb.PersistentClient(path=_PERSIST_DIR, settings=_settings)
+_client = chromadb.PersistentClient(path=_PERSIST_DIR, settings=_SETTINGS)
 
 # --------------------------------------------------------------------------- #
-# Embedding function adapter
+# Embedding adapter
 # --------------------------------------------------------------------------- #
 class _Adapter(EmbeddingFunction):
-    """Wrap our embedding provider so Chroma can call it."""
-
-    def __init__(self):
+    def __init__(self) -> None:
         self._provider = get_default_provider()
 
     def __call__(self, texts: List[str]) -> List[List[float]]:  # type: ignore[override]
         return self._provider.embed(texts)
 
 
-_emb_fn = _Adapter()
 _collection = _client.get_or_create_collection(
     name="products",
-    embedding_function=_emb_fn,
+    embedding_function=_Adapter(),
 )
 
 
