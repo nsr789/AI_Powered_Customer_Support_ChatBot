@@ -5,7 +5,7 @@ Nodes:
     ask_llm → decide_retrieval → {search_products | recommender}
 """
 from __future__ import annotations
-
+import os
 from typing import Dict, List
 
 from langchain_core.messages import HumanMessage
@@ -71,3 +71,5 @@ graph.add_edge("search", END)
 graph.add_edge("fallback", END)
 
 router = graph.compile()
+
+_llm: LLMInterface = OpenAIProvider() if os.getenv("OPENAI_API_KEY") else FakeLLM()
