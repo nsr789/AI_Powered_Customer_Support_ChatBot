@@ -1,12 +1,14 @@
-flask>=2.3,<3.0
-sqlalchemy>=2.0,<3.0
-requests>=2.31,<3.0
-python-dotenv>=1.0,<2.0
-chromadb>=0.5.23,<0.6
-numpy>=1.26,<2.0
-openai>=1.25,<2.0
-pytest>=8.0,<9.0
-langchain>=0.2,<0.3
-langgraph>=0.0.36,<0.1
-langchain-community>=0.0.21,<0.1        # NEW – base integrations
-langchain-openai>=0.1.7,<0.2            # NEW – OpenAI provider
+flask>=2.3
+sqlalchemy>=2.0
+requests>=2.31
+python-dotenv>=1.0
+chromadb>=0.5.23
+numpy>=1.26
+openai>=1.25
+pytest>=8.0
+
+# LangChain ecosystem – keep mins, drop upper bounds
+langchain>=0.2.17
+langchain-community>=0.0.24
+langchain-openai>=0.1.7
+langgraph>=0.0.69
