@@ -1,12 +1,11 @@
 """
 Application factory and entry-point.
 
-In Phase-1 we simply boot the Flask app, register API blueprint,
-and ensure database tables are present.
+Boots Flask, registers blueprints, creates DB tables.
 """
 from __future__ import annotations
 
-from flask import Flask
+from flask import Flask, jsonify
 
 from app.api.routes import api_bp
 from app.core.database import init_db
@@ -15,19 +14,32 @@ from app.core.database import init_db
 def create_app() -> Flask:
     """Flask application factory."""
     app = Flask(__name__)
+
+    # ---- Root route ---------------------------------------------------------
+    @app.route("/", methods=["GET"])
+    def root():
+        """Simple landing route for '/'."""
+        return jsonify(
+            {
+                "message": "AI-Support Platform backend is running.",
+                "available_endpoints": [
+                    "/api/health",
+                    "/api/search?q=<query>",
+                ],
+            }
+        )
+
+    # ---- Blueprints ---------------------------------------------------------
     app.register_blueprint(api_bp, url_prefix="/api")
 
-    # Lazily create tables at start-up
+    # ---- DB initialisation --------------------------------------------------
     with app.app_context():
         init_db()
 
     return app
 
 
-# ------------------------------------------------------------------#
-# Local dev entry-point
-# ------------------------------------------------------------------#
+# Local dev entry-point -------------------------------------------------------
 if __name__ == "__main__":
-    # Only for debugging; Render/Gunicorn will invoke `create_app`
     application = create_app()
     application.run(host="0.0.0.0", port=8000, debug=True)
