@@ -52,9 +52,25 @@ _BEST_SELLERS: List[Dict] = [
 ]
 
 
+
 def recommend(_: str, k: int = 5):  # query is ignored in fake mode
     """Return `k` popular products (deterministic for tests)."""
     if k >= len(_BEST_SELLERS):
         return _BEST_SELLERS.copy()
     # deterministic sample to keep tests repeatable
     return sorted(sample(_BEST_SELLERS, k), key=lambda d: d["id"])
+
+
+# --------------------------------------------------------------------------- #
+# Compatibility shim – older modules expect a `top_n()` helper.               #
+# --------------------------------------------------------------------------- #
+def top_n(query: str, n: int = 5):
+    """
+    Back-compat alias used by `app.services.indexer` when the vector search
+    returns zero hits.  Delegates to :func:`recommend`.
+    """
+    return recommend(query, k=n)
+
+
+__all__ = ["recommend", "top_n"]
+
