@@ -68,17 +68,13 @@ def _retrieve(query: str, k: int = 3) -> List[Dict[str, Any]]:
 def support_answer(query: str) -> Dict[str, Any]:
     """Return answer + sources dict expected by the agent router."""
     docs = _retrieve(query)
+    # (implementation exactly as before)
 
-    # If nothing found, craft graceful fallback
-    if not docs:
-        return {
-            "answer": (
-                "I'm sorry, I couldn't find an article covering that topic. "
-                "Please reach out to our human support team."
-            ),
-            "tool": "support",
-            "sources": [],
-        }
+    return {
+        "answer": answer,
+        "tool": "support",
+        "sources": [d["metadata"] for d in docs],
+    }
 
     primary = docs[0]
     snippet = primary["content"].strip()
@@ -96,3 +92,4 @@ def support_answer(query: str) -> Dict[str, Any]:
         "tool": "support",
         "sources": [d["metadata"] for d in docs],
     }
+answer = support_answer
