@@ -1,71 +1,81 @@
 """
 Support-RAG helper.
 
-Answers FAQ-style questions by retrieving the most relevant snippets from the
-Chroma collection ``support_kb`` that is built by `support_loader`.
-"""
+Provides retrieval-augmented generation for customer-support questions against
+our small Markdown knowledge‑base ingested into the `support_kb` Chroma
+collection.
 
+Public API: ``answer(query: str) -> dict`` used by the agent router.
+"""
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
+
+from langchain_community.vectorstores import Chroma
 
 from app.core.vector_store import get_collection
 
 __all__ = ["answer"]
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 def _vector_top_k(query: str, k: int = 3) -> List[Tuple[str, dict]]:
-    """Vector-similarity retrieval via Chroma."""
+    """Retrieve *k* most similar chunks via the embedding index."""
     col = get_collection("support_kb")
     result = col.query(query_texts=[query], n_results=k)
     return list(zip(result["documents"][0], result["metadatas"][0]))
 
 
-def _keyword_fallback(query: str) -> Tuple[str, dict] | None:
-    """
-    Simple keyword scan across **all** documents.
+def _match_tokens(text: str, tokens: set[str]) -> bool:
+    lowered = text.lower()
+    return any(tok in lowered for tok in tokens)
 
-    Returns the first (text, metadata) tuple whose text contains ANY token
-    from the query (case-insensitive).  Returns ``None`` if nothing matches.
+
+def _keyword_fallback(query: str) -> Tuple[str, dict] | None:
+    """Scan every stored chunk and metadata for keyword overlap.
+
+    The fallback ensures *some* answer is produced even when the vector search
+    fails (e.g. because the embedding model isn't great for small datasets).
     """
     col = get_collection("support_kb")
-    docs = col.get(include=["documents", "metadatas"])
+    store = col.get(include=["documents", "metadatas"])
+
     tokens = set(re.findall(r"[a-zA-Z]+", query.lower()))
 
-    for text, meta in zip(docs["documents"], docs["metadatas"]):
-        if any(tok in text.lower() for tok in tokens):
+    for text, meta in zip(store["documents"], store["metadatas"]):
+        meta_blob = " ".join(str(v) for v in (meta or {}).values())
+        if _match_tokens(text, tokens) or _match_tokens(meta_blob, tokens):
             return text, meta
     return None
 
 
 def _retrieve_docs(query: str, k: int = 3) -> List[Tuple[str, dict]]:
-    """
-    Retrieve documents using vector search with a keyword-based safety net.
-    """
-    pairs = _vector_top_k(query, k=k)
-
-    # If vector search failed to produce anything relevant, fall back.
-    if not pairs or all(not p[0] for p in pairs):
+    """Hybrid retrieval: vector first, then keyword fallback."""
+    pairs = [p for p in _vector_top_k(query, k) if p[0]]
+    if not pairs:
         kb_hit = _keyword_fallback(query)
-        pairs = [kb_hit] if kb_hit else []
-
+        if kb_hit:
+            pairs.append(kb_hit)
     return pairs
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
-def answer(query: str) -> Dict:
-    """
-    Build a response dict consumed by the LangGraph router.
+def _compose_answer(doc_text: str, meta: dict) -> str:
+    title = (meta or {}).get("title") or (meta or {}).get("heading")
+    if title and title.lower() not in doc_text.lower():
+        return f"{title}\n\n{doc_text}"
+    return doc_text
 
-    Keys:
-    - ``tool``    : literal "support"
-    - ``answer``  : best-matching document text (or apology)
-    - ``sources`` : list[dict]   – metadata for each returned doc
-    """
-    pairs = _retrieve_docs(query, k=3)
 
-    if not pairs:
-        # Still nothing? fall back to generic apology but keep sources key.
+def answer(query: str) -> Dict[str, Any]:
+    """Return a JSON‑like dict expected by the agent graph."""
+    docs = _retrieve_docs(query)
+    if not docs:
         return {
             "tool": "support",
             "answer": (
@@ -75,11 +85,9 @@ def answer(query: str) -> Dict:
             "sources": [],
         }
 
-    best_doc, _ = pairs[0]
-    sources = [meta or {} for _, meta in pairs]
-
+    best_text, best_meta = docs[0]
     return {
         "tool": "support",
-        "answer": best_doc,
-        "sources": sources,
+        "answer": _compose_answer(best_text, best_meta),
+        "sources": [m or {} for _, m in docs],
     }
