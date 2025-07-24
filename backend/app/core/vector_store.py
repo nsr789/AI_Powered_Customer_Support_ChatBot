@@ -1,71 +1,45 @@
 """
-Centralised Chroma client / collection helpers.
+Centralised Chroma client helpers.
+
+Handles both HTTP-client (remote server) and in-process client variants.
+Compatible with Chroma ≥ 0.4 – some method names differ.
 """
 from __future__ import annotations
-
 import os
-from pathlib import Path
-from typing import List
-
 import chromadb
-from chromadb.config import Settings
-from chromadb.utils.embedding_functions import EmbeddingFunction
+from chromadb.api.models import Collection
 
-from app.core.embeddings import get_default_provider
-
-# --------------------------------------------------------------------------- #
-# Defensive patch: if an old stub of `posthog` is imported, make capture a no-op
-# --------------------------------------------------------------------------- #
-def _silence_broken_posthog() -> None:
-    try:
-        import posthog  # type: ignore
-        if not hasattr(posthog.capture, "__code__") or posthog.capture.__code__.co_argcount == 1:
-            posthog.capture = lambda *_, **__: None  # type: ignore[assignment]
-    except ImportError:
-        pass
-
-
-_silence_broken_posthog()
-
-# --------------------------------------------------------------------------- #
-# Client setup (embedded persistent DB – no external server)
-# --------------------------------------------------------------------------- #
-_PERSIST_DIR = os.getenv(
-    "CHROMA_PERSIST_DIR",
-    str(Path(__file__).resolve().parent.parent.parent / ".chroma"),
-)
-
-_SETTINGS = Settings(
+_settings = chromadb.Settings(
+    chroma_api_impl="rest",
+    chroma_server_host=os.getenv("CHROMA_HOST", "localhost"),
+    chroma_server_http_port=int(os.getenv("CHROMA_PORT", 8000)),
     anonymized_telemetry=False,
-    is_persistent=True,
-    persist_directory=_PERSIST_DIR,
 )
-
-_client = chromadb.PersistentClient(path=_PERSIST_DIR, settings=_SETTINGS)
-
-# --------------------------------------------------------------------------- #
-# Embedding adapter
-# --------------------------------------------------------------------------- #
-class _Adapter(EmbeddingFunction):
-    def __init__(self) -> None:
-        self._provider = get_default_provider()
-
-    def __call__(self, texts: List[str]) -> List[List[float]]:  # type: ignore[override]
-        return self._provider.embed(texts)
+_client = chromadb.HttpClient(settings=_settings)
 
 
-_collection = _client.get_or_create_collection(
-    name="products",
-    embedding_function=_Adapter(),
-)
+def _collection_names() -> list[str]:
+    """
+    Return list of existing collection names, handling API differences
+    between chromadb client classes.
+    """
+    # Newer API (0.5.x http client)
+    if hasattr(_client, "get_collection_names"):
+        return _client.get_collection_names()
+    # Fallback (in-process client 0.4 / 0.5)
+    if hasattr(_client, "list_collections"):
+        return [c.name for c in _client.list_collections()]
+    raise AttributeError("Unable to list Chroma collections with this client.")
 
-
-def get_collection():
-    """Return the singleton products collection."""
-    return _collection
 
 def get_collection(name: str = "products") -> Collection:
-    """Return (and lazily create) a Chroma collection."""
-    if name not in _client.get_collection_names():
+    """
+    Lazily create (if missing) and return a Chroma collection.
+
+    Names used:
+      • "products"   – product vectors
+      • "support_kb" – customer-support knowledge-base
+    """
+    if name not in _collection_names():
         _client.create_collection(name)
     return _client.get_collection(name)
