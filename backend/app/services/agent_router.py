@@ -1,44 +1,42 @@
 """
-LangGraph state-machine deciding which tool to call.
+LangGraph state-machine that decides: product search, recommendations, or
+customer-support answer.
 """
 from __future__ import annotations
-
 import os
-from typing import Dict, List
+from typing import Dict
 
 from langgraph.graph import END, StateGraph
-from langchain_core.messages import HumanMessage
-
 from app.core.llm import LLMInterface, OpenAIProvider, FakeLLM
 from app.core.database import get_db
 from app.services.indexer import search_products
 from app.services.recommender import top_n
-from app.services.data_loader import fetch_products, save_products
+from app.services.support_rag import answer as support_answer
 
-# --------------------------------------------------------------------------- #
-# LLM provider
-# --------------------------------------------------------------------------- #
 _llm: LLMInterface = OpenAIProvider() if os.getenv("OPENAI_API_KEY") else FakeLLM()
 
-# --------------------------------------------------------------------------- #
-# Node functions
-# --------------------------------------------------------------------------- #
+# ───────────────────────── Node functions ─────────────────────────────────────
 def ask_llm(state: Dict) -> Dict:
+    """Classify user request."""
     user_query = state["query"]
     system_prompt = (
-        "If the query is about finding or recommending a product respond "
-        "with exactly 'search'. Otherwise respond with 'fallback'."
+        "Classify the user request strictly as one word: "
+        "'search', 'recommend', or 'support'.\n"
+        "- 'search': user looking for a product or keyword\n"
+        "- 'recommend': user asks for suggestions / what to buy\n"
+        "- 'support': user asks about order, shipping, returns, warranty, payment"
     )
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_query},
     ]
-    tool_resp = "".join(_llm.stream(messages)).strip().lower()
-    state["tool"] = "search" if tool_resp == "search" else "fallback"
+    decision = "".join(_llm.stream(messages)).strip().lower()
+    state["tool"] = decision if decision in {"search", "recommend", "support"} else "support"
     return state
 
 
-def decide_retrieval(state: Dict) -> str:
+def decide_next(state: Dict) -> str:
     return state["tool"]
 
 
@@ -47,53 +45,48 @@ def run_search(state: Dict) -> Dict:
     results = search_products(db, state["query"])
     state.update(
         {
+            "answer": "Here are the products I found:",
             "results": [p.as_dict() for p in results],
-            "answer": "Here are some products I found.",
         }
     )
     return state
 
 
-def run_recommender(state: Dict) -> Dict:
+def run_recommend(state: Dict) -> Dict:
     db = next(get_db())
-    limit = 5
-    results = top_n(db, limit=limit)
-
-    # If DB has fewer than `limit` items, seed with offline sample and retry
-    if len(results) < limit:
-        save_products(db, fetch_products())          # idempotent upsert
-        results = top_n(db, limit=limit)
-
+    results = top_n(db, limit=5)
     state.update(
         {
-            "results": [p.as_dict() for p in results],
             "answer": "Here are popular picks for you.",
+            "results": [p.as_dict() for p in results],
         }
     )
     return state
 
 
-# --------------------------------------------------------------------------- #
-# Build LangGraph *after* functions are declared
-# --------------------------------------------------------------------------- #
+def run_support(state: Dict) -> Dict:
+    state.update(support_answer(state["query"]))
+    return state
+
+
+# ───────────────────────── Build graph ────────────────────────────────────────
 graph = StateGraph(dict)
 
 graph.add_node("ask_llm", ask_llm)
 graph.add_node("search", run_search)
-graph.add_node("fallback", run_recommender)
+graph.add_node("recommend", run_recommend)
+graph.add_node("support", run_support)
 
 graph.set_entry_point("ask_llm")
 
 graph.add_conditional_edges(
     "ask_llm",
-    decide_retrieval,
-    {
-        "search": "search",
-        "fallback": "fallback",
-    },
+    decide_next,
+    {"search": "search", "recommend": "recommend", "support": "support"},
 )
 
 graph.add_edge("search", END)
-graph.add_edge("fallback", END)
+graph.add_edge("recommend", END)
+graph.add_edge("support", END)
 
 router = graph.compile()
