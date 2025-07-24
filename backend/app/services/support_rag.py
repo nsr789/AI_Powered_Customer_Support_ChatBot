@@ -1,56 +1,56 @@
 """
-Tiny RAG-style helper used by the support agent node.
-
-For production you would wire a real embedding-retriever chain.  
-For the test-suite we keep things minimal but functional.
+Light-weight RAG helper for the customer-support knowledge-base.
 """
-from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List
 
-from langchain_community.vectorstores import Chroma
+from langchain.docstore.document import Document
+from langchain.vectorstores import Chroma
 
-from app.core.vector_store import _client, get_collection
-from app.core.llm import EmbeddingModel  # thin wrapper used elsewhere
+from app.core.vector_store import get_collection
+
+__all__ = ["answer"]
 
 
-def _get_retriever():
+def _retrieve_docs(query: str, k: int = 3) -> List[Document]:
+    """Return top-k relevant support articles as LangChain `Document`s."""
+    vectordb = get_collection("support_kb")
+    retriever = Chroma(collection=vectordb).as_retriever(search_kwargs={"k": k})
+    return retriever.get_relevant_documents(query)  # type: ignore[call-arg]
+
+
+def answer(query: str) -> Dict:
     """
-    Wrap the existing “support_kb” Chroma collection with LangChain's
-    VectorStore so we can call `.as_retriever()`.
+    Answer a support question via RAG.
+
+    Returns
+    -------
+    dict
+        {
+            "tool":    "support",
+            "answer":  <str>,
+            "sources": [<metadata-dict>, ...]
+        }
     """
-    return Chroma(
-        client=_client,
-        collection_name="support_kb",
-        embedding_function=EmbeddingModel(),  # type: ignore[arg-type]
-    ).as_retriever(search_kwargs={"k": 3})
+    docs = _retrieve_docs(query)
 
+    # Fallback message when nothing matches
+    if not docs:
+        return {
+            "tool": "support",
+            "answer": (
+                "Sorry, I couldn't find an article that answers that. "
+                "Please contact support for further assistance."
+            ),
+            "sources": [],
+        }
 
-def answer(query: str) -> Dict[str, str]:
-    """
-    Return a simple answer dict for the given query.
+    # Simple heuristic: first doc’s body becomes the answer.
+    top_doc = docs[0]
+    sources = [d.metadata or {} for d in docs]
 
-    The test-suite only checks that we *return something*, not the actual
-    semantic quality, so a short templated reply is sufficient.
-    """
-    try:
-        retriever = _get_retriever()
-        docs = retriever.get_relevant_documents(query)
-        context = docs[0].page_content if docs else ""
-    except Exception:
-        # Fallback if retriever fails for any reason
-        context = ""
-
-    if "return" in query.lower():
-        reply = (
-            "Our standard return policy allows returns within 30 days of "
-            "delivery in original condition. Simply contact support to "
-            "receive a prepaid shipping label."
-        )
-    else:
-        reply = (
-            "Here’s what I found in the knowledge-base:\n\n"
-            f"{context[:300]}..."
-        )
-
-    return {"answer": reply}
+    return {
+        "tool": "support",
+        "answer": top_doc.page_content,
+        "sources": sources,
+    }
