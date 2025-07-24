@@ -1,44 +1,61 @@
-"""
-Ingest markdown or plaintext FAQ / policy docs into Chroma ("support_kb").
-Run once during deployment:
+"""Load Markdown docs into the support-knowledge-base Chroma collection."""
 
-    python -m app.services.support_loader
-"""
-from pathlib import Path
+from __future__ import annotations
+
+import hashlib
+import pathlib
+import re
+from typing import List
+
 import frontmatter
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
+from app.core.llm import EmbeddingModel
 from app.core.vector_store import get_collection
-from app.core.llm import EmbeddingModel  # thin wrapper used elsewhere
 
-_KB_DIR = Path(__file__).parents[2] / "docs" / "faq"
+_DOC_PATH = pathlib.Path(__file__).parents[2] / "data" / "support_kb"
+_EMBED = EmbeddingModel()          # deterministic stub
+
+# --------------------------------------------------------------------------- #
+def _h1_title(markdown_body: str) -> str | None:
+    """Return first H1 heading stripped of leading '# ' or None."""
+    for line in markdown_body.splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return None
 
 
-def _iter_docs():
-    """Yield dicts with id, content, metadata for every *.md file."""
-    for path in _KB_DIR.glob("*.md"):
-        post = frontmatter.load(path)
-        yield {
-            "id": str(path),
-            "content": post.content,
-            "metadata": {"title": post.get("title", path.stem)},
-        }
+def _files() -> List[pathlib.Path]:
+    return sorted(f for f in _DOC_PATH.rglob("*.md") if f.is_file())
 
 
 def main() -> None:
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    collection = get_collection("support_kb")
+    """Idempotently (re)create the `support_kb` collection."""
+    col = get_collection("support_kb")
+    existing: set[str] = set(col.get(ids=[], include=["ids"])["ids"])
 
-    for doc in _iter_docs():
-        for chunk in splitter.split_text(doc["content"]):
-            collection.add(
-                ids=[f"{doc['id']}#{hash(chunk)}"],
-                documents=[chunk],
-                metadatas=[doc["metadata"]],
-                embeddings=[EmbeddingModel().embed(chunk)],
-            )
+    texts: List[str] = []
+    metas: List[dict] = []
+    ids:   List[str] = []
+
+    for f in _files():
+        fm = frontmatter.loads(f.read_text(encoding="utf-8"))
+        body: str = fm.content.strip()
+        meta: dict = fm.metadata or {}
+
+        # --- fill in missing title from first H1 ----------------------------
+        if "title" not in meta:
+            title = _h1_title(body)
+            if title:
+                meta["title"] = title
+
+        doc_id = hashlib.sha256(f.as_posix().encode()).hexdigest()[:16]
+        if doc_id in existing:
+            continue  # already loaded
+
+        texts.append(body)
+        metas.append(meta)
+        ids.append(doc_id)
+
+    if texts:
+        embeds = [_EMBED.embed(t) for t in texts]  # type: ignore[arg-type]
+        col.add(ids=ids, embeddings=embeds, documents=texts, metadatas=metas)
     print("✅  Support knowledge-base ingested.")
-
-
-if __name__ == "__main__":
-    main()
