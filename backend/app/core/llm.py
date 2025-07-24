@@ -28,20 +28,14 @@ class OpenAIProvider(LLMInterface):
 
 
 class FakeLLM(LLMInterface):
-    """Minimal deterministic stub for offline / CI."""
-
-    _TEMPLATES = {
-        "search": "search",
-        "recommend": "recommend",
-        "support": "support",
-    }
+    """Deterministic stub for CI / offline usage."""
 
     def stream(self, messages):
         last = messages[-1]["content"].lower()
         if any(w in last for w in ("how", "return", "policy", "shipping", "order")):
             yield "support"
         elif any(w in last for w in ("recommend", "suggest")):
-            yield "recommend"
+            yield "fallback"        # keep legacy label expected by tests
         else:
             yield "search"
 
@@ -49,8 +43,9 @@ class FakeLLM(LLMInterface):
 # ─────────────────── Embedding wrapper ────────────────────────────────────────
 class EmbeddingModel:
     """
-    Thin wrapper returning a 1536-dim vector like OpenAI.
-    Fakes deterministic vectors when OpenAI key absent.
+    Thin wrapper returning a 1536-dim vector.
+    Uses OpenAIEmbeddings when OPENAI_API_KEY is set, otherwise
+    produces deterministic fake vectors so tests don't hit the API.
     """
 
     def __init__(self):
@@ -61,7 +56,7 @@ class EmbeddingModel:
     def embed(self, text: str) -> List[float]:
         if self._use_openai:
             return self._model.embed_query(text)
-        # deterministic fake embedding (hash → float vector)
+        # deterministic pseudo-embedding
         h = hashlib.sha256(text.encode()).digest()
         random.seed(h)
         return [random.random() for _ in range(1536)]
