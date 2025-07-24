@@ -24,23 +24,57 @@ _FAKESTORE_PRODUCTS_URL = f"{settings.FAKESTORE_API_URL}/products"
 # Public helpers
 # ------------------------------------------------------------------#
 def fetch_products() -> List[dict[str, Any]]:
-    """Hit FakeStore API and return raw JSON list. Fall back to sample."""
+    """Fetch FakeStore catalogue; fall back to 5 local samples when offline."""
     try:
         resp = requests.get(_FAKESTORE_PRODUCTS_URL, timeout=10)
         resp.raise_for_status()
         return resp.json()  # type: ignore[return-value]
     except (HTTPError, requests.RequestException) as err:
         log.warning("FakeStore API unavailable (%s). Using offline sample.", err)
+        # ---------- expanded deterministic sample (5 items) ----------
         return [
             {
                 "id": 1,
-                "title": "Sample Tee",
-                "description": "Offline sample product",
+                "title": "Green Mug",
+                "description": "Ceramic mug",
+                "category": "home",
+                "price": 5.0,
+                "image": None,
+            },
+            {
+                "id": 2,
+                "title": "Basic White Tee",
+                "description": "Cotton shirt",
                 "category": "clothing",
                 "price": 9.99,
-                "image": "",
-            }
+                "image": None,
+            },
+            {
+                "id": 3,
+                "title": "Blue Jeans",
+                "description": "Denim pants",
+                "category": "clothing",
+                "price": 19.99,
+                "image": None,
+            },
+            {
+                "id": 4,
+                "title": "Running Shoes",
+                "description": "Lightweight sneakers",
+                "category": "footwear",
+                "price": 49.99,
+                "image": None,
+            },
+            {
+                "id": 5,
+                "title": "Leather Wallet",
+                "description": "Genuine leather bifold",
+                "category": "accessories",
+                "price": 24.5,
+                "image": None,
+            },
         ]
+
 
 
 def save_products(session: Session, items: Iterable[dict[str, Any]]) -> int:
