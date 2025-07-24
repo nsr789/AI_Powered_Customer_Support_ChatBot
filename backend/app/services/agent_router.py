@@ -13,6 +13,7 @@ from app.core.llm import LLMInterface, OpenAIProvider, FakeLLM
 from app.core.database import get_db
 from app.services.indexer import search_products
 from app.services.recommender import top_n
+from app.services.data_loader import fetch_products, save_products
 
 # --------------------------------------------------------------------------- #
 # LLM provider
@@ -55,7 +56,14 @@ def run_search(state: Dict) -> Dict:
 
 def run_recommender(state: Dict) -> Dict:
     db = next(get_db())
-    results = top_n(db)
+    limit = 5
+    results = top_n(db, limit=limit)
+
+    # If DB has fewer than `limit` items, seed with offline sample and retry
+    if len(results) < limit:
+        save_products(db, fetch_products())          # idempotent upsert
+        results = top_n(db, limit=limit)
+
     state.update(
         {
             "results": [p.as_dict() for p in results],
