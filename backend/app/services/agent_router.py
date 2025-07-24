@@ -1,6 +1,6 @@
 """
-LangGraph state-machine that decides: product search, recommendations, or
-customer-support answer.
+LangGraph state-machine that decides: product search, recommendations (fallback),
+or customer-support answer.
 """
 from __future__ import annotations
 import os
@@ -17,22 +17,23 @@ _llm: LLMInterface = OpenAIProvider() if os.getenv("OPENAI_API_KEY") else FakeLL
 
 # ───────────────────────── Node functions ─────────────────────────────────────
 def ask_llm(state: Dict) -> Dict:
-    """Classify user request."""
+    """Classify the user request into search / fallback / support."""
     user_query = state["query"]
     system_prompt = (
         "Classify the user request strictly as one word: "
-        "'search', 'recommend', or 'support'.\n"
-        "- 'search': user looking for a product or keyword\n"
-        "- 'recommend': user asks for suggestions / what to buy\n"
-        "- 'support': user asks about order, shipping, returns, warranty, payment"
+        "'search', 'fallback', or 'support'.\n"
+        "- 'search': user seeking products by keyword\n"
+        "- 'fallback': user wants suggestions / recommendations\n"
+        "- 'support': user asks about shipping, returns, warranty, etc."
     )
-
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_query},
     ]
     decision = "".join(_llm.stream(messages)).strip().lower()
-    state["tool"] = decision if decision in {"search", "recommend", "support"} else "support"
+    if decision not in {"search", "fallback", "support"}:
+        decision = "fallback"
+    state["tool"] = decision
     return state
 
 
@@ -52,7 +53,7 @@ def run_search(state: Dict) -> Dict:
     return state
 
 
-def run_recommend(state: Dict) -> Dict:
+def run_fallback(state: Dict) -> Dict:
     db = next(get_db())
     results = top_n(db, limit=5)
     state.update(
@@ -74,7 +75,7 @@ graph = StateGraph(dict)
 
 graph.add_node("ask_llm", ask_llm)
 graph.add_node("search", run_search)
-graph.add_node("recommend", run_recommend)
+graph.add_node("fallback", run_fallback)
 graph.add_node("support", run_support)
 
 graph.set_entry_point("ask_llm")
@@ -82,11 +83,11 @@ graph.set_entry_point("ask_llm")
 graph.add_conditional_edges(
     "ask_llm",
     decide_next,
-    {"search": "search", "recommend": "recommend", "support": "support"},
+    {"search": "search", "fallback": "fallback", "support": "support"},
 )
 
 graph.add_edge("search", END)
-graph.add_edge("recommend", END)
+graph.add_edge("fallback", END)
 graph.add_edge("support", END)
 
 router = graph.compile()
