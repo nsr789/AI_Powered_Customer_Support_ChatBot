@@ -1,51 +1,62 @@
-"""Light-weight Retrieval-Augmented Generation for support knowledge-base."""
+"""
+Light-weight Retrieval-Augmented QA over the support knowledge-base.
+
+The router expects `support_answer(query: str) -> dict` that returns:
+    {
+        "answer":  str,
+        "tool":    "support",
+        "sources": List[dict]   # metadata of cited docs
+    }
+"""
+
 from __future__ import annotations
 
 import re
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from app.core.vector_store import get_collection
 
 # --------------------------------------------------------------------------- #
-# Retrieval helpers
+# Internal helpers
 # --------------------------------------------------------------------------- #
 
 
-def _similar_docs(query: str, k: int = 3) -> List[Dict[str, Any]]:
-    """Vector-similarity search via Chroma’s native query API."""
+def _vector_search(query: str, k: int = 3) -> List[Dict[str, Any]]:
+    """Semantic similarity search using Chroma’s native API."""
     col = get_collection("support_kb")
-    res = col.query(query_texts=[query], n_results=k, include=["documents", "metadatas"])
+    res = col.query(
+        query_texts=[query],
+        n_results=k,
+        include=["documents", "metadatas"],
+    )
+    # unwrap single-query response
+    return [
+        {"content": doc, "metadata": meta}
+        for doc, meta in zip(res["documents"][0], res["metadatas"][0])
+    ]
 
-    docs: List[Dict[str, Any]] = []
-    # Chroma returns nested lists → unwrap first (and only) query batch
-    for text, meta in zip(res["documents"][0], res["metadatas"][0]):
-        docs.append({"content": text, "metadata": meta})
-    return docs
 
-
-def _keyword_fallback(query: str, k: int = 3) -> List[Dict[str, Any]]:
-    """Simple keyword search across all stored docs/metadata."""
+def _keyword_search(query: str, k: int = 3) -> List[Dict[str, Any]]:
+    """Fallback keyword scan across every stored doc/metadata."""
     col = get_collection("support_kb")
-    pattern = re.compile("|".join(re.escape(tok) for tok in query.lower().split()), re.I)
+    tokens = [re.escape(tok) for tok in query.lower().split()]
+    pattern = re.compile("|".join(tokens), re.I)
 
-    # pull *all* docs once (support KB is tiny)
     res = col.get(include=["documents", "metadatas"])
-    matched: List[Dict[str, Any]] = []
-    for text, meta in zip(res["documents"], res["metadatas"]):
-        haystack = f"{text} {meta}".lower()
-        if pattern.search(haystack):
-            matched.append({"content": text, "metadata": meta})
-            if len(matched) >= k:
+    hits: List[Dict[str, Any]] = []
+    for doc, meta in zip(res["documents"], res["metadatas"]):
+        if pattern.search(doc.lower()) or pattern.search(str(meta).lower()):
+            hits.append({"content": doc, "metadata": meta})
+            if len(hits) >= k:
                 break
-    return matched
+    return hits
 
 
 def _retrieve(query: str, k: int = 3) -> List[Dict[str, Any]]:
-    """Hybrid retrieval – try vector first, then keyword."""
-    docs = _similar_docs(query, k)
-    if not docs or all("return" not in d["content"].lower() for d in docs):
-        # vector search didn’t find the obvious doc – fall back
-        docs = _keyword_fallback(query, k)
+    """Hybrid retrieval: vector first, keyword fallback."""
+    docs = _vector_search(query, k)
+    if not docs:
+        docs = _keyword_search(query, k)
     return docs
 
 
@@ -54,14 +65,11 @@ def _retrieve(query: str, k: int = 3) -> List[Dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 
-def answer(query: str) -> Dict[str, Any]:
-    """Return an answer + sources for a customer-support query.
-
-    Structure expected by the router:
-        {"answer": str, "tool": "support", "sources": List[dict]}
-    """
+def support_answer(query: str) -> Dict[str, Any]:
+    """Return answer + sources dict expected by the agent router."""
     docs = _retrieve(query)
 
+    # If nothing found, craft graceful fallback
     if not docs:
         return {
             "answer": (
@@ -73,15 +81,18 @@ def answer(query: str) -> Dict[str, Any]:
         }
 
     primary = docs[0]
-    title = primary["metadata"].get("title") or primary["metadata"].get("heading", "")
     snippet = primary["content"].strip()
+    title = primary["metadata"].get("title") or primary["metadata"].get("heading", "")
 
-    # Guarantee the keyword is present (helps the Phase-5 test)
-    if title and title.lower() not in snippet.lower():
-        snippet = f"{title}: {snippet}"
+    # Compose concise answer
+    answer_parts = []
+    if title:
+        answer_parts.append(title)
+    answer_parts.append(snippet)
+    answer = ": ".join(answer_parts)
 
     return {
-        "answer": snippet,
+        "answer": answer,
         "tool": "support",
         "sources": [d["metadata"] for d in docs],
     }
