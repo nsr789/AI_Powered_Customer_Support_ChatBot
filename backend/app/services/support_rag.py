@@ -1,23 +1,18 @@
-"""Retrieve-and-generate answers from the support knowledge-base."""
+"""Retrieve-and-answer helper for the support knowledge-base."""
 
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import re
 
 from app.core.vector_store import get_collection
 
 
 def _retrieve(query: str, k: int = 3) -> List[Dict[str, Any]]:
-    """
-    Return top-k document chunks relevant to *query*.
-
-    We query the underlying Chroma collection directly; no LangChain wrapper
-    is required (and the wrapper’s API changed in recent versions).
-    """
-    collection = get_collection("support_kb")  # chromadb.api.models.Collection
-
+    """Return top-k chunks from the support KB."""
+    collection = get_collection("support_kb")
     try:
-        result = collection.query(
+        res = collection.query(
             query_texts=[query],
             n_results=k,
             include=["documents", "metadatas"],
@@ -26,20 +21,38 @@ def _retrieve(query: str, k: int = 3) -> List[Dict[str, Any]]:
         return []
 
     docs: List[Dict[str, Any]] = []
-    # `query()` returns lists-of-lists keyed by 'documents' / 'metadatas'
-    for content, meta in zip(result.get("documents", [[]])[0],
-                             result.get("metadatas", [[]])[0]):
+    for content, meta in zip(res.get("documents", [[]])[0],
+                             res.get("metadatas", [[]])[0]):
         docs.append({"page_content": content, "metadata": meta or {}})
 
     return docs
 
 
-def support_answer(query: str) -> Dict[str, Any]:
-    """Return answer + source metadata dict consumed by the agent router."""
-    docs = _retrieve(query)
+def _select_answer(query: str, docs: List[Dict[str, Any]]) -> str:
+    """
+    Choose the most relevant doc chunk.
 
+    Preference order:
+    1. First chunk containing *any* keyword from the query.
+    2. Fallback to docs[0] if no keyword hit.
+    """
+    tokens = set(re.findall(r"\w+", query.lower()))
+    for d in docs:
+        if any(tok in d["page_content"].lower() for tok in tokens):
+            return d["page_content"]
+    return docs[0]["page_content"] if docs else ""
+
+
+def support_answer(query: str) -> Dict[str, Any]:
+    """
+    Generate an answer for *query* from the support KB.
+
+    Returns the dict expected by the agent router:
+    {"answer": str, "tool": "support", "sources": [metadata, ...]}
+    """
+    docs = _retrieve(query)
     if docs:
-        answer_text = docs[0]["page_content"]
+        answer_text = _select_answer(query, docs)
     else:
         answer_text = (
             "I'm sorry, I couldn't find an article covering that topic. "
@@ -53,7 +66,6 @@ def support_answer(query: str) -> Dict[str, Any]:
     }
 
 
-# --------------------------------------------------------------------------- #
-# Legacy alias expected by older imports / tests.
+# Back-compat for earlier imports
 answer = support_answer
 __all__ = ["support_answer", "answer"]
