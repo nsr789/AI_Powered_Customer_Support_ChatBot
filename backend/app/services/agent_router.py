@@ -53,15 +53,14 @@ def run_search(state: Dict) -> Dict:
     return state
 
 
-def run_fallback(state: Dict) -> Dict:
-    db = next(get_db())
-    results = top_n(db, limit=5)
-    state.update(
-        {
-            "answer": "Here are popular picks for you.",
-            "results": [p.as_dict() for p in results],
-        }
-    )
+def run_fallback(state):
+    """Return a set of popular items when no specific tool triggers."""
+    from app.services import recommender
+
+    state["tool"] = "fallback"
+    # always return exactly 5 items for the test expectation
+    state["results"] = recommender.recommend(state["query"], k=5)
+    state["answer"] = "Here are popular picks for you."
     return state
 
 
