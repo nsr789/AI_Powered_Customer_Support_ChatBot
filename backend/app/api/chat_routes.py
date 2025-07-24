@@ -14,17 +14,20 @@ chat_bp = Blueprint("chat", __name__)
 @chat_bp.route("/chat", methods=["POST"])
 def chat():
     data = request.get_json(force=True)
-    query: str = data.get("query", "")
+    query: str = data.get("query", "").strip()
     if not query:
         return {"error": "query required"}, 400
 
+    # ---------- single-tick execution ----------
+    final_state = router.invoke({"query": query})
+
     def event_stream():
-        state = {"query": query}
-        for step in router.stream(state):
-            if "answer" in step:
-                payload = json.dumps(
-                    {"answer": step["answer"], "results": step.get("results", [])}
-                )
-                yield f"data: {payload}\n\n"
+        payload = json.dumps(
+            {
+                "answer": final_state["answer"],
+                "results": final_state.get("results", []),
+            }
+        )
+        yield f"data: {payload}\n\n"
 
     return Response(event_stream(), mimetype="text/event-stream")
