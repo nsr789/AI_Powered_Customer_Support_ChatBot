@@ -1,41 +1,67 @@
 """
-LLM provider utilities: wraps OpenAIChat + cheap FakeLLM for tests.
+LLM & embedding helpers shared across services.
 """
 from __future__ import annotations
-
 import os
-from typing import Dict, List
+import hashlib
+import random
+from typing import List
 
-# UPDATED import path -----------------------------------------------
-from langchain_openai import ChatOpenAI
-from langchain.schema import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain.chat_models import ChatOpenAI
+from langchain.schema import BaseMessage
+from langchain.embeddings import OpenAIEmbeddings
 
-# -------------------------------------------------------------------
+
+# ─────────────────── Chat-LLM interface ───────────────────────────────────────
 class LLMInterface:
-    """Protocol-like minimal interface."""
-
-    def stream(self, messages: List[Dict[str, str]]):
+    def stream(self, messages: list[dict | BaseMessage]) -> str:
         raise NotImplementedError
 
 
 class OpenAIProvider(LLMInterface):
-    def __init__(self, temperature: float = 0.2):
-        self._chat = ChatOpenAI(
-            temperature=temperature,
-            model_name=os.getenv("OPENAI_CHAT_MODEL", "gpt-3.5-turbo-0125"),
-        )
+    def __init__(self, model: str = "gpt-3.5-turbo-0125"):
+        self._client = ChatOpenAI(model=model, temperature=0.2, streaming=True)
 
-    def stream(self, messages: List[Dict[str, str]]):
-        role_map = {"system": SystemMessage, "user": HumanMessage, "assistant": AIMessage}
-        lc_msgs: List[BaseMessage] = [role_map[m["role"]](content=m["content"]) for m in messages]
-
-        for chunk in self._chat.stream(lc_msgs):
-            yield chunk.content
+    def stream(self, messages):
+        for chunk in self._client.stream(messages):
+            yield chunk.content or ""
 
 
 class FakeLLM(LLMInterface):
-    """Deterministic LLM for unit tests."""
+    """Minimal deterministic stub for offline / CI."""
 
-    def stream(self, messages: List[Dict[str, str]]):
-        prompt = messages[-1]["content"].lower()
-        yield "Here are some picks" if "recommend" in prompt else "Sorry, nothing found."
+    _TEMPLATES = {
+        "search": "search",
+        "recommend": "recommend",
+        "support": "support",
+    }
+
+    def stream(self, messages):
+        last = messages[-1]["content"].lower()
+        if any(w in last for w in ("how", "return", "policy", "shipping", "order")):
+            yield "support"
+        elif any(w in last for w in ("recommend", "suggest")):
+            yield "recommend"
+        else:
+            yield "search"
+
+
+# ─────────────────── Embedding wrapper ────────────────────────────────────────
+class EmbeddingModel:
+    """
+    Thin wrapper returning a 1536-dim vector like OpenAI.
+    Fakes deterministic vectors when OpenAI key absent.
+    """
+
+    def __init__(self):
+        self._use_openai = bool(os.getenv("OPENAI_API_KEY"))
+        if self._use_openai:
+            self._model = OpenAIEmbeddings(model="text-embedding-3-small")
+
+    def embed(self, text: str) -> List[float]:
+        if self._use_openai:
+            return self._model.embed_query(text)
+        # deterministic fake embedding (hash → float vector)
+        h = hashlib.sha256(text.encode()).digest()
+        random.seed(h)
+        return [random.random() for _ in range(1536)]
