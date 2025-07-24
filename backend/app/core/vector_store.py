@@ -63,3 +63,9 @@ _collection = _client.get_or_create_collection(
 def get_collection():
     """Return the singleton products collection."""
     return _collection
+
+def get_collection(name: str = "products") -> Collection:
+    """Return (and lazily create) a Chroma collection."""
+    if name not in _client.get_collection_names():
+        _client.create_collection(name)
+    return _client.get_collection(name)
