@@ -1,96 +1,90 @@
-"""Support-KB retrieve-and-answer helpers."""
+"""
+Simple RAG helper for support articles.
 
+We keep a deterministic, offline-friendly embedder but add a lexical fallback
+so that obviously-relevant docs (e.g. containing “return”) are always found.
+"""
 from __future__ import annotations
 
-import re
-from typing import Any, Dict, List, Set
+import math
+from typing import Any, Dict, List
 
-from app.core.vector_store import get_collection
 from app.core.llm import EmbeddingModel
-
-_embedder = EmbeddingModel()  # deterministic stub
-
-# --------------------------------------------------------------------------- #
-_STOP: Set[str] = {
-    "the", "is", "are", "a", "an", "and", "or", "of",
-    "to", "in", "on", "for", "with", "what", "why", "how",
-}
-
-
-def _keyword_tokens(text: str) -> Set[str]:
-    toks = {t for t in re.findall(r"\w+", text.lower()) if len(t) > 2}
-    return toks - _STOP
-
+from app.core.vector_store import get_collection
 
 # --------------------------------------------------------------------------- #
+_EMBEDDER = EmbeddingModel()         # deterministic stub used in earlier phases
+_COLLECTION_NAME = "support_kb"
+
+
+def _euclidean(a: List[float], b: List[float]) -> float:
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+
+def _fetch_all() -> Dict[str, Any]:
+    """Return *all* docs, embeddings & metadata from the collection."""
+    col = get_collection(_COLLECTION_NAME)
+    return col.get(include=["documents", "embeddings", "metadatas"])
+
+
 def _retrieve(query: str, k: int = 3) -> List[Dict[str, Any]]:
-    """Return up to *k* docs relevant to *query*."""
-    col = get_collection("support_kb")
+    """
+    Vector-similarity search **with** lexical fallback.
 
-    # 1) vector search --------------------------------------------------------
-    try:
-        vec = _embedder.embed(query)
-        res = col.query(
-            query_embeddings=[vec],
-            n_results=k,
-            include=["documents", "metadatas"],
-        )
-        docs = [
-            {"page_content": c, "metadata": m or {}}
-            for c, m in zip(res["documents"][0], res["metadatas"][0])
-        ]
-        if docs:
-            return docs
-    except Exception:
-        pass  # fall back to lexical
+    Returns a list of dicts with keys: document, metadata, score.
+    """
+    store = _fetch_all()
 
-    # 2) lexical fallback -----------------------------------------------------
-    kw = _keyword_tokens(query)
-    if not kw:
+    if not store["documents"]:
         return []
 
-    blob = col.get(include=["documents", "metadatas"])
-    scored: list[tuple[int, Dict[str, Any]]] = []
-    for content, meta in zip(blob["documents"], blob["metadatas"]):
-        haystack = f"{meta.get('title','')} {content}".lower()
-        hits = sum(1 for w in kw if w in haystack)
-        if hits:
-            scored.append((hits, {"page_content": content, "metadata": meta or {}}))
+    q_emb = _EMBEDDER.embed(query)
 
-    scored.sort(key=lambda t: -t[0])
-    return [d for _, d in scored[:k]]
+    # ---- vector similarity --------------------------------------------------
+    scored = []
+    for doc, emb, meta in zip(
+        store["documents"], store["embeddings"], store["metadatas"]
+    ):
+        dist = _euclidean(q_emb, emb)
+        scored.append({"document": doc, "metadata": meta, "score": dist})
 
+    scored.sort(key=lambda d: d["score"])
+    top_vec = scored[: k * 2]  # broaden a bit before lexical filter
 
-def _pick_answer(query: str, docs: List[Dict[str, Any]]) -> str:
-    """Return the single best paragraph to show the user."""
-    if not docs:
-        return ""
-    kw = _keyword_tokens(query)
-    for d in docs:
-        full_text = f"{d['metadata'].get('title','')}\n\n{d['page_content']}"
-        if any(w in full_text.lower() for w in kw):
-            return full_text
-    # fallback to first
-    first = docs[0]
-    return f"{first['metadata'].get('title','')}\n\n{first['page_content']}"
+    # ---- lexical filter fallback -------------------------------------------
+    q_tokens = {tok.lower() for tok in query.split()}
+    best = []
+    for item in top_vec:
+        doc_lc = item["document"].lower()
+        if any(tok in doc_lc for tok in q_tokens):
+            best.append(item)
+        if len(best) >= k:
+            break
+
+    # If nothing matched lexically, just return the vector top-k
+    return best or scored[:k]
 
 
 def support_answer(query: str) -> Dict[str, Any]:
-    """Return answer + sources dict required by the agent-router."""
+    """Return answer, tool tag and source list for the agent-router."""
     docs = _retrieve(query)
-    answer_txt = (
-        _pick_answer(query, docs)
-        if docs
-        else "I'm sorry, I couldn't find an article covering that topic. "
-             "Please reach out to our human support team."
-    )
+
+    if not docs:
+        return {
+            "answer": (
+                "I'm sorry, I couldn't find an article covering that topic. "
+                "Please reach out to our human support team."
+            ),
+            "tool": "support",
+            "sources": [],
+        }
+
+    # Use first paragraph of the best match as the answer
+    best_doc = docs[0]["document"].strip()
+    first_para = best_doc.split("\n\n", 1)[0].replace("\n", " ").strip()
+
     return {
-        "answer": answer_txt,
+        "answer": first_para,
         "tool": "support",
         "sources": [d["metadata"] for d in docs],
     }
-
-
-# compatibility export
-answer = support_answer
-__all__ = ["support_answer", "answer"]
