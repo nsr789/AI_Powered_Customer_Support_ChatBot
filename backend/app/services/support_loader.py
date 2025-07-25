@@ -30,8 +30,11 @@ def main() -> None:
     """Idempotently ingest support articles into the `support_kb` collection."""
     collection = get_collection("support_kb")
 
-    # ---- FIX: fetch existing IDs without passing an empty list --------------
-    existing_ids: set[str] = set(collection.get(include=["ids"])["ids"])
+    # ------------------------------------------------------------------ FIX -- #
+    # Chroma always returns 'ids', so don't pass an include list containing
+    # 'ids' (that value is no longer accepted).
+    existing_ids: set[str] = set(collection.get()["ids"])
+    # ------------------------------------------------------------------------- #
 
     new_docs: List[str] = []
     new_ids:  List[str] = []
@@ -55,7 +58,7 @@ def main() -> None:
         new_ids.append(doc_id)
         new_meta.append(meta)
 
-    if new_docs:  # only embed & add if there is something new
+    if new_docs:
         embeddings = [_EMBEDDER.embed(t) for t in new_docs]  # type: ignore[arg-type]
         collection.add(
             ids=new_ids,
